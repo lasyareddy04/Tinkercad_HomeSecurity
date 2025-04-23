@@ -1,0 +1,156 @@
+#include <LiquidCrystal.h>   
+#include <Keypad.h>
+#include <Servo.h>
+
+int servostate;
+int posOpen = 0;   // Open position for servo
+int posClose = 90; // Close position for servo
+int password[4] = {0, 0, 0, 0};
+int passwordIndex = 0;
+int C1 = 5, C2 = 5, C3 = 5, C4 = 5;  // Password values
+int Buzzer = A3;
+char f = '*';  
+
+const byte row = 4; 
+const byte column = 4;
+char hex[row][column] = {
+  {'1','2','3'},
+  {'4','5','6'},
+  {'7','8','9'},
+  {'*','0','#'}
+};
+byte pinRow[row] = {0, 6, 5, 4}; 
+byte pinColumn[column] = {3, 2, 1};
+
+Servo myservo;
+Keypad keypad = Keypad(makeKeymap(hex), pinRow, pinColumn, row, column);
+LiquidCrystal lcd(8, 9, 10, 11, 12, 13);
+
+const int PIRSensor = A2;
+const int trigPin = 4;
+const int echoPin = 5;
+
+unsigned long lastKeyPressTime = 0;
+const unsigned long keypadTimeout = 5000; // 5 seconds timeout
+
+bool doorLocked = false;  
+
+void setup() {
+  Serial.begin(9600);  
+  lcd.begin(16, 2); 
+  pinMode(A0, OUTPUT); 
+  pinMode(A1, OUTPUT); 
+  pinMode(Buzzer, OUTPUT);
+  
+  myservo.attach(7); 
+  myservo.write(posOpen);
+  servostate = 1;
+
+  pinMode(PIRSensor, INPUT); 
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+
+  lcd.clear();
+  lcd.print("Insert Password");
+  Serial.println("System Ready");
+}
+
+long getDistance() {
+  digitalWrite(trigPin, LOW); 
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10); 
+  digitalWrite(trigPin, LOW);
+
+  long duration = pulseIn(echoPin, HIGH);
+  return (duration * 0.034 / 2);
+}
+
+bool isMotionDetected() {
+  return digitalRead(PIRSensor) == HIGH;
+}
+
+void processPassword() {
+  if (password[0] == C1 && password[1] == C2 && password[2] == C3 && password[3] == C4) {
+    lcd.clear();
+    lcd.setCursor(4, 0);
+    lcd.print("Door");
+    lcd.setCursor(5, 1);
+    if (!doorLocked) {
+      lcd.print("Locking...");
+      myservo.write(posClose);
+      doorLocked = true;
+    } else {
+      lcd.print("Unlocking...");
+      myservo.write(posOpen);
+      doorLocked = false;
+    }
+    digitalWrite(A0, HIGH);
+    delay(1000); 
+    digitalWrite(A0, LOW);
+  } else {
+    lcd.clear();
+    lcd.setCursor(4, 0);
+    lcd.print("Password");
+    lcd.setCursor(4, 1);
+    lcd.print("Invalid");
+    digitalWrite(Buzzer, HIGH);
+    digitalWrite(A1, HIGH); 
+    delay(1500); 
+    digitalWrite(A1, LOW);
+    digitalWrite(Buzzer, LOW);
+  }
+  lcd.clear();
+  lcd.print("Insert Password");
+  passwordIndex = 0;
+}
+
+void loop() {
+  static unsigned long lastSensorCheck = 0;
+  const unsigned long sensorCheckInterval = 1000; //checks sensors every 1sec
+
+  //only checks sensors if the door is locked
+  if (doorLocked && millis() - lastSensorCheck > sensorCheckInterval) {
+    lastSensorCheck = millis();
+    
+    long distance = getDistance();
+    bool motion = isMotionDetected();
+    
+    Serial.print("Distance: ");
+    Serial.print(distance);
+    Serial.print(" cm, Motion: ");
+    Serial.println(motion ? "Detected" : "Not Detected");
+
+    if (motion || (distance > 0 && distance < 10)) {  // Trigger if object is within 10 cm
+      lcd.clear();
+      lcd.print("Intrusion Alert!");
+      digitalWrite(Buzzer, HIGH);
+      delay(1000);
+      digitalWrite(Buzzer, LOW);
+      lcd.clear();
+      lcd.print("Insert Password");
+    }
+  }
+
+  char key = keypad.getKey();
+
+  if (key) {
+    Serial.print("Key pressed: ");
+    Serial.println(key);
+    lastKeyPressTime = millis();
+    if (key >= '0' && key <= '9' && passwordIndex < 4) {
+      password[passwordIndex] = key - '0';
+      lcd.setCursor(6 + passwordIndex, 1);
+      lcd.print(f);
+      passwordIndex++;
+      if (passwordIndex == 4) {
+        processPassword();
+      }
+    }
+  } else if (passwordIndex > 0 && millis() - lastKeyPressTime > keypadTimeout) {
+    // Timeout occurred, reset password entry
+    lcd.clear();
+    lcd.print("Insert Password");
+    passwordIndex = 0;
+  }
+}
